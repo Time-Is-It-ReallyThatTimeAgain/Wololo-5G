@@ -30,38 +30,7 @@ class NrSliceGymEnv : public OpenGymEnv
         MMTC  = 2
     };
 
-    // -----------------------------------------------------------------------
-    // Config — all simulation parameters that govern the RL environment.
-    //
-    // CRITICAL: maxUes must be UPPER BOUNDS exceeding the simulated UE counts,
-    // NOT the simulated counts themselves.
-    //
-    // Reason: obs[12:15] = m_uesPerSlice[s] / maxUes[s].  If maxUes equals the
-    // simulated count, this ratio is identically 1.0 for every slice, every
-    // step, making those three observation dimensions constant and uninformative.
-    // Setting maxUes to a plausible system-level upper bound (e.g. 2× simulated)
-    // produces fractional values that carry real density information.
-    //
-    // Defaults below match the values set in slice-rl-sim.cc at runtime:
-    //   embbUes=10  → maxUes[EMBB]=20   → obs[12]=0.50
-    //   urllcUes=5  → maxUes[URLLC]=10  → obs[13]=0.50
-    //   mmtcUes=20  → maxUes[MMTC]=50   → obs[14]=0.40
-    //
-    // maxThrMbps rationale (P0-A fix):
-    //   mMTC: 20 UEs × 2 Mbps peak × 10% duty = 4 Mbps expected aggregate.
-    //   Old value of 2.0 Mbps caused Clamp01(thr/max) to saturate at 1.0 for
-    //   ~86% of active-period steps, producing a near-binary obs[5].
-    //   New value of 8.0 Mbps = 2 × expected aggregate, keeping obs[5] in
-    //   (0, 1) with gradient throughout the realistic operating range.
-    //   eMBB and URLLC are unaffected (their maxThr already exceed peak demand).
-    //
-    // Note on UeWeightsMap RNTI constraint:
-    //   The 5G-LENA AI scheduler API uses uint8_t as the RNTI key in
-    //   UeWeightsMap, limiting the AI weight map to 255 UEs per gNB.
-    //   This scenario uses 35 UEs and is unaffected. A runtime guard in
-    //   ApplySliceWeights() logs an error and skips any UE whose RNTI
-    //   exceeds 255, preventing silent key truncation.
-    // -----------------------------------------------------------------------
+
     struct Config
     {
         uint16_t totalPrbs{51};
@@ -69,16 +38,10 @@ class NrSliceGymEnv : public OpenGymEnv
         Time simTime{Seconds(100)};
         std::array<uint16_t, kSliceCount> initialPrbAlloc{25, 15, 11};
 
-        // Upper bounds — must EXCEED simulated UE counts (see note above).
-        // Default: {20, 10, 50} for eMBB, URLLC, mMTC respectively.
-        // Was incorrectly {10, 5, 20} (equal to simulated counts → obs always 1.0).
+
         std::array<uint32_t, kSliceCount> maxUes{10, 5, 5};
 
-        // maxThrMbps: capacity ceiling used in two places:
-        //   obs[3:6]   = thr / maxThr              (throughput utilisation)
-        //   obs[12:15] = (thr - minThr) / (maxThr - minThr)  (SLA headroom)
-        // Both formulas require maxThr > expected operating throughput to avoid
-        // saturation. Values below are set to 1.5–2× expected aggregate.
+
         std::array<double, kSliceCount> maxThrMbps{130.0, 30.0, 8.0};
 
         std::array<double, kSliceCount> maxLatMs{30.0,  10.0, 150.0};
@@ -156,9 +119,7 @@ class NrSliceGymEnv : public OpenGymEnv
 
     std::array<uint16_t, kSliceCount> m_prbAlloc{10, 8, 7};
     std::array<float,    kObsSize>    m_observation{};
-    // Snapshot consumed by ScheduleStep() for obs[12:15] / reward alignment.
     std::array<uint32_t, kSliceCount> m_backlogBytes{};
-    // Accumulator written by async scheduler callbacks between RL steps.
     std::array<uint32_t, kSliceCount> m_backlogAccum{};
     std::array<double, kSliceCount> m_thrMbps{};
     std::array<double, kSliceCount> m_latMs{};
@@ -172,17 +133,11 @@ class NrSliceGymEnv : public OpenGymEnv
     std::array<bool, kSliceCount> m_latValid{};
     
     
-
-    // Flow-level cumulative stat trackers (delta computation each step).
-    // These maps grow with the number of unique flow IDs assigned by FlowMonitor.
-    // With 35 UEs and 3 traffic types the entry count is bounded at O(100).
     std::unordered_map<uint32_t, uint64_t> m_prevRxBytes{};
 
-    // Per-flow lost-packet state (mirrors m_prevRxBytes pattern).
     std::unordered_map<uint32_t, uint64_t> m_prevLostPackets;
 
-    // Per-slice step-level PELR = deltaLost / (deltaLost + deltaRx).
-    // Reset to 0.0 every step. Used for URLLC 5QI-83 PELR ≤ 10⁻⁴ SLA check.
+
     std::array<double, kSliceCount> m_pktLossRate{0.0, 0.0, 0.0};
 };
 
