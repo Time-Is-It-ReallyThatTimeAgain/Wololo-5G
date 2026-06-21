@@ -18,7 +18,7 @@ train:
   save_every: 10
 
 dqn:
-  lr: 0.0001 #was 0.001 then second change to 0.0003 
+  lr: 0.0001 
   gamma: 0.99
   batch_size: 64
   buffer_size: 50000
@@ -38,15 +38,15 @@ ppo:
   batch_size: 64
   ent_coef: 0.01
   vf_coef: 0.5
-  grad_clip: 0.5     # add this
+  grad_clip: 0.5     
 
 r2d2:
   lr: 0.0001
   gamma: 0.99
   batch_size: 32
-  seq_len: 80      # was 40 — P1-4 fix
+  seq_len: 80      
   burn_in: 40
-  # n_step: 5 <- remove this line
+  n_step: 5 
   per_alpha: 0.6
   per_beta_start: 0.4
   per_beta_end: 1.0
