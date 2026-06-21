@@ -1,7 +1,4 @@
-"""Uniform replay buffer for DQN.
-
-Array/list-backed ring buffer with O(1) random indexing.
-"""
+"""Uniform replay buffer for DQN."""
 
 from __future__ import annotations
 
