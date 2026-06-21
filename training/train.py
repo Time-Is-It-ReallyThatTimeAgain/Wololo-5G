@@ -1,31 +1,3 @@
-#!/usr/bin/env python3
-"""Training entrypoint — DQN.
-
-KEY ARCHITECTURE NOTE (ns3-gym protocol):
-  env.reset() called ONCE before the episode loop.
-  Episodes are delimited by max_steps steps, not by NS-3 socket resets.
-  The NS-3 simulation runs continuously across all episodes of a single launch.
-
-GPU support:
-  Automatically uses CUDA if available. GTX 1650 supported.
-  NS-3 always runs on CPU — only PyTorch training benefits from GPU.
-
-Resume support:
-  --resume: loads latest dqn_ep*.pt checkpoint and continues from that episode.
-  Optimizer state, replay buffer, and epsilon are all restored.
-
-SLA rate definition (must match C++ reward in slice-env.cc ScheduleStep):
-  A slice is counted as "satisfied" if:
-    (a) its observed throughput >= min_thr AND latency observation < 0.5, OR
-    (b) it is inactive (mMTC or URLLC with thr < 0.001 Mbps — off-period).
-  Off-period exclusion mirrors the C++ inactive-slice logic exactly.
-
-Metric logging — episode averages:
-  All throughput, latency, SLA, HOL, efficiency, and reward-decomposition
-  values are episode averages (step accumulators / step_count).
-  PRB allocation is the last-step snapshot (it is the agent's control output).
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -52,7 +24,7 @@ from envs.slice_gym_env import SLICE_NAMES, SliceGymEnv
 from envs.metrics import compute_sla_rates, nan_or_round
 from monitor import TrainingMonitor
 
-# Must match totalPrbs in slice-rl-sim.cc (20 MHz, μ=1 → 51 PRBs).
+
 _PRB_TOTAL = 51
 
 
@@ -132,7 +104,7 @@ def main() -> None:
     agent    = DqnAgent(dqn_cfg, device)
     start_ep = 1
 
-    # ── Resume ────────────────────────────────────────────────────────────────
+    
     model_dir = MODEL_DIR
     os.makedirs(model_dir, exist_ok=True)
 
@@ -197,8 +169,7 @@ def main() -> None:
 
     decoded = info.get("decoded_obs", None)
 
-    # Running reward mean — tracked here for JSONL; monitor.py tracks its own copy
-    # for TensorBoard. Both use maxlen=10.
+    
     reward_history: deque[float] = deque(maxlen=10)
 
     with TrainingMonitor("dqn", start_ep + args.episodes - 1, max_steps,
@@ -212,13 +183,13 @@ def main() -> None:
                 step_bar   = mon.begin_episode(ep)
                 ep_losses: list[float] = []
 
-                # ── Per-episode accumulators ───────────────────────────────
+                # Per-episode accumulators 
                 # Throughput (Mbps)
                 ep_embb_sum      = 0.0
                 ep_urllc_thr_sum = 0.0
                 ep_mmtc_sum      = 0.0
 
-                # Latency (ms) — active-only, gate on thr >= 0.001 Mbps
+                # Latency (ms) 
                 ep_embb_lat_sum  = 0.0;  ep_embb_lat_n  = 0
                 ep_urllc_lat_sum = 0.0;  ep_urllc_lat_n = 0
                 ep_mmtc_lat_sum  = 0.0;  ep_mmtc_lat_n  = 0
@@ -253,13 +224,13 @@ def main() -> None:
 
                 # URLLC PELR — from extra_json["pkt_loss_rate"][1]
                 ep_urllc_pelr_sum = 0.0
-                # ──────────────────────────────────────────────────────────
+                
 
                 for _ in range(max_steps):
                     action = agent.act(obs, explore=True)
                     next_obs, reward, done, truncated, info = env.step(action)
 
-                    # ── Config consistency check (first step of first episode) ──
+                    
                     if ep == start_ep and step_count == 0:
                         ns3_cfg = (info.get("extra_json") or {}).get("cfg", {})
                         if ns3_cfg:
@@ -295,15 +266,11 @@ def main() -> None:
                     obs         = next_obs
                     decoded     = info.get("decoded_obs", decoded)
 
-                    # ── Accumulate metrics ─────────────────────────────────
+                    
                     if decoded is not None:
                         extra_json = info.get("extra_json")
 
-                        # Fallback: build minimal extra_json from obs when backend info is absent.
-                        # Note: obs[16] is URLLC PELR-normalized, not demand_active.
-                        # obs[15] and obs[17] are now thr/minThr floats, obs[16] is PELR float.
-                        # None of them should be rounded to binary demand flags.
-                        # If extra_json is None, leave it None — metrics.py handles it gracefully.
+                      
                         prb_frac_step = decoded.get("prb_frac", {})
 
                         ep_prb_embb_sum += (
@@ -315,14 +282,14 @@ def main() -> None:
                         ep_prb_mmtc_sum += (
                             float(prb_frac_step.get("mMTC", 0.0)) * _PRB_TOTAL
                         )
-                        # — SLA rates (overall + per slice) —
+                        
                         sla_rates = compute_sla_rates(decoded, cfg, extra_json)
                         ep_sla_sum       += sla_rates["overall"]
                         ep_sla_embb_sum  += sla_rates["embb"]
                         ep_sla_urllc_sum += sla_rates["urllc"]
                         ep_sla_mmtc_sum  += sla_rates["mmtc"]
 
-                        # — Throughput (Mbps) —
+                        #  Throughput (Mbps) 
                         ep_embb_sum      += (float(decoded["throughput"].get("eMBB",  0.0))
                                              * float(cfg["env"]["max_thr_mbps"]["eMBB"]))
                         ep_urllc_thr_sum += (float(decoded["throughput"].get("URLLC", 0.0))
@@ -330,7 +297,7 @@ def main() -> None:
                         ep_mmtc_sum      += (float(decoded["throughput"].get("mMTC",  0.0))
                                              * float(cfg["env"]["max_thr_mbps"]["mMTC"]))
 
-                        # — Latency (ms) — prefer raw lat_ms from extra_json, fall back to obs ─
+                        #  Latency (ms) 
                         lat_ms_raw = None
                         if extra_json and isinstance(extra_json.get("lat_ms"), list):
                             lat_ms_raw = extra_json["lat_ms"]
@@ -354,7 +321,7 @@ def main() -> None:
                         ep_mmtc_lat_sum,  ep_mmtc_lat_n  = _accum_lat(
                             "mMTC",  2, "mMTC",  ep_mmtc_lat_sum,  ep_mmtc_lat_n,  "mMTC")
 
-                        # — HOL delay — prefer extra_json, fall back to obs[9:12] —
+                        # HOL delay 
                         if extra_json and isinstance(extra_json.get("hol_norm"), list):
                             ep_hol_embb_sum  += float(extra_json["hol_norm"][0])
                             ep_hol_urllc_sum += float(extra_json["hol_norm"][1])
@@ -364,13 +331,13 @@ def main() -> None:
                             ep_hol_urllc_sum += float(obs[10])
                             ep_hol_mmtc_sum  += float(obs[11])
 
-                        # — PRB efficiency — obs[12:15] —
+                        #  PRB efficiency 
                         if len(obs) >= 15:
                             ep_eff_embb_sum  += float(obs[12])
                             ep_eff_urllc_sum += float(obs[13])
                             ep_eff_mmtc_sum  += float(obs[14])
 
-                        # — Reward decomposition — from extra_json["reward_terms"] —
+                        #  Reward decomposition 
                         rt = (extra_json or {}).get("reward_terms", {})
                         if rt:
                             ep_rwd_thr_sum  += float(rt.get("thr_norm_avg",    0.0))
@@ -379,7 +346,7 @@ def main() -> None:
                             ep_rwd_viol_sum += float(rt.get("violation_rate",  0.0))
                             ep_active_sum   += float(rt.get("active_slices",   0.0))
 
-                        # — URLLC PELR — from extra_json["pkt_loss_rate"][1] —
+                        #  URLLC PELR 
                         if extra_json and isinstance(extra_json.get("pkt_loss_rate"), list):
                             ep_urllc_pelr_sum += float(extra_json["pkt_loss_rate"][1])
 
@@ -400,7 +367,7 @@ def main() -> None:
 
                 step_bar.close()
 
-                # ── Episode averages ──────────────────────────────────────
+                #  Episode average
                 n = max(1, step_count)
 
                 sla_rate  = ep_sla_sum       / n
@@ -437,15 +404,15 @@ def main() -> None:
 
                 mean_loss = float(np.mean(ep_losses)) if ep_losses else 0.0
 
-                # PRB allocation — last-step snapshot (agent's control output)
+                # PRB allocation 
                 if decoded is None:
                     decoded = {"prb_frac": {}}
                 prb_frac  = decoded.get("prb_frac", {})
 
-                # Running reward mean (JSONL copy — monitor.py maintains its own)
+                
                 reward_history.append(ep_reward)
                 reward_mean10 = sum(reward_history) / len(reward_history)
-                # ─────────────────────────────────────────────────────────
+                
 
                 mon.end_episode(
                     ep_reward   = ep_reward,
@@ -486,9 +453,9 @@ def main() -> None:
                     },
                 )
 
-                # ── JSONL record — flat keys, pandas-ready ────────────────
+                
                 rec = {
-                    # identity
+                    
                     "episode":     ep,
                     "steps":       step_count,
                     # reward
@@ -503,7 +470,7 @@ def main() -> None:
                     "embb_thr":    round(embb_thr,     6),
                     "urllc_thr":   round(urllc_thr,    6),
                     "mmtc_thr":    round(mmtc_thr,     6),
-                    # latency (ms) — None when slice inactive all episode
+                    # latency (ms) 
                     "embb_lat":    nan_or_round(embb_lat),
                     "urllc_lat":   nan_or_round(urllc_lat),
                     "mmtc_lat":    nan_or_round(mmtc_lat),
@@ -512,7 +479,6 @@ def main() -> None:
                     "hol_urllc":   round(hol_urllc,    6),
                     "hol_mmtc":    round(hol_mmtc,     6),
                     # PRB allocation (last-step, integer PRBs)
-                    # FIX: was * 25 — must be * 51 to match totalPrbs
                     "prb_embb": round(avg_prb_embb, 2),
                     "prb_urllc": round(avg_prb_urllc, 2),
                     "prb_mmtc": round(avg_prb_mmtc, 2),
@@ -520,7 +486,7 @@ def main() -> None:
                     "eff_embb":    round(eff_embb,     6),
                     "eff_urllc":   round(eff_urllc,    6),
                     "eff_mmtc":    round(eff_mmtc,     6),
-                    # reward decomposition terms
+                    # reward decompositiom
                     "rwd_thr_norm":       round(rwd_thr_norm,       6),
                     "rwd_sla_margin":     round(rwd_sla_margin,     6),
                     "rwd_eff_norm":       round(rwd_eff_norm,       6),
