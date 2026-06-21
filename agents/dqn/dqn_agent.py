@@ -67,7 +67,7 @@ class DqnAgent:
     def train_step(self) -> Dict[str, float]:
         if len(self.buffer) < self.cfg.batch_size:
             return {"loss": 0.0}
-        self.total_steps += 1      # only counts steps where a gradient fires the counter used to be under def store(self, ...)
+        self.total_steps += 1     
 
         obs, actions, rewards, next_obs, dones = self.buffer.sample(self.cfg.batch_size, self.device)
 
@@ -107,7 +107,7 @@ class DqnAgent:
             },
             path,
         )
-        # Save replay buffer as sidecar file
+        
         buf_path = path.with_suffix(".buf")
         with open(buf_path, "wb") as f:
             pickle.dump(self.buffer, f, protocol=pickle.HIGHEST_PROTOCOL)
