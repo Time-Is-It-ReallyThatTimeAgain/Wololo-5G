@@ -1,23 +1,6 @@
-"""Gym 0.26.2 wrapper for the NS-3 5G slice RL environment.
+"""Gym 0.26.2 wrapper for the NS-3 5G slice RL environment."""
 
-Observation layout (18 floats, all normalised to [0, 1]):
-    [0:3]   prb_frac      — fraction of totalPrbs allocated to each slice
-    [3:6]   throughput    — normalised by per-slice maxThrMbps
-    [6:9]   latency       — normalised by 2 × per-slice maxLatMs
-                            (reads 0.5 at the SLA boundary, not 1.0)
-    [9:12]  hol_delay     — mean Head-of-Line delay per slice,
-                            normalised by 2 × per-slice maxLatMs.
-                            SLA boundary maps to 0.5, matching obs[6:9].
-                            Forward-looking congestion proxy: rises before
-                            packets are dropped. Sample-and-hold when no
-                            fresh scheduler callback fires in the 100ms window.
-    [12:15] prb_align     — 1 - |prbFrac - demandFrac| in [0,1].
-                            Demand share is backlog-first from scheduler pending bytes
-                            (fallback to throughput when backlog unavailable).
-    [15]    embb_active   — binary demand/activity indicator.
-    [16]    urllc_pelr    — normalized PELR: pkt_loss_rate/(2*1e-4), SLA boundary at 0.5.
-    [17]    mmtc_active   — binary demand/activity indicator.     
-"""
+
 
 from __future__ import annotations
 
@@ -31,10 +14,7 @@ from gym import spaces
 import json
 
 # ns3gym is installed inside the project venv only.
-# The guarded import below:
-#   (a) silences IDE warnings from static analysers that don't know the venv
-#   (b) produces a clear, actionable error if someone runs this outside the venv
-# At runtime inside the venv this import always succeeds — it is not a real guard.
+
 try:
     from ns3gym import ns3env
 except ImportError as e:
@@ -87,10 +67,7 @@ class SliceGymEnv(gym.Env):
         )
         self.action_space = spaces.Discrete(ACTION_SIZE)
 
-        # Ns3Env is the ZMQ bridge object. It binds to GYM_PORT and waits
-        # for the NS-3 process (which acts as the ZMQ client) to connect.
-        # startSim=False means we never launch NS-3 from Python —
-        # run_simulation_copy2.sh handles that separately.
+       
         self._ns3_env = ns3env.Ns3Env(
             port=self.port,
             simSeed=self.sim_seed,
@@ -110,7 +87,7 @@ class SliceGymEnv(gym.Env):
     def _coerce_obs(self, obs_obj: Any) -> np.ndarray:
         """Unwrap ns3-gym observation payload variants into a flat 18-vector."""
         obj = obs_obj
-        # Some ns3-gym builds wrap observation in singleton tuple/list.
+        
         for _ in range(3):
             if isinstance(obj, tuple) and len(obj) == 1:
                 obj = obj[0]
@@ -119,13 +96,13 @@ class SliceGymEnv(gym.Env):
                 obj = obj[0]
                 continue
             break
-        # Some wrappers return dict-like payloads for reset/step.
+        
         if isinstance(obj, dict):
             for key in ("obs", "observation", "state", "data"):
                 if key in obj:
                     obj = obj[key]
                     break
-        # Some wrappers return textual vectors like "[0.1, 0.2, ...]".
+        
         if isinstance(obj, str):
             s = obj.strip()
             if s.startswith("[") and s.endswith("]"):
@@ -134,7 +111,7 @@ class SliceGymEnv(gym.Env):
                     obj = parsed
                 except Exception:
                     pass
-        # Last-chance unwrap after dict/string conversion.
+        
         if isinstance(obj, (tuple, list)) and len(obj) == 1 and isinstance(obj[0], (list, tuple, np.ndarray)):
             obj = obj[0]
         arr = np.asarray(obj, dtype=np.float32).reshape(-1)
@@ -146,25 +123,20 @@ class SliceGymEnv(gym.Env):
         )
 
     def _decode_obs(self, obs: np.ndarray) -> Dict[str, Dict[str, float]]:
-        """Break the flat 18-float observation into a labelled dictionary.
-        """
+        
         arr = self._validate_obs(obs)
         return {
             "prb_frac":   dict(zip(SLICE_NAMES, arr[0:3].tolist())),
             "throughput": dict(zip(SLICE_NAMES, arr[3:6].tolist())),
             "latency":    dict(zip(SLICE_NAMES, arr[6:9].tolist())),
-            "hol_delay":  dict(zip(SLICE_NAMES, arr[9:12].tolist())),  # was queue_occ — FINAL
+            "hol_delay":  dict(zip(SLICE_NAMES, arr[9:12].tolist())),   
             "prb_align": dict(zip(SLICE_NAMES, arr[12:15].tolist())),
             "sla_proximity":    dict(zip(SLICE_NAMES, arr[15:18].tolist())),
         }
     
     @staticmethod
     def _coerce_info(info_obj: Any) -> Dict[str, Any]:
-        """Normalize backend info payloads to a dictionary.
-
-        ns3-gym versions are inconsistent: `info` may be a dict, mapping-like
-        object, JSON string, plain string, or None.
-        """
+        
         if info_obj is None:
             return {}
         if isinstance(info_obj, dict):
@@ -196,7 +168,7 @@ class SliceGymEnv(gym.Env):
 
         raw = self._ns3_env.reset()
 
-        # ns3-gym wrappers differ by version: old returns obs, newer may return (obs, info)
+        
         if isinstance(raw, tuple) and len(raw) == 2:
             obs_raw, info = raw
             info = self._coerce_info(info)
@@ -210,12 +182,8 @@ class SliceGymEnv(gym.Env):
         return obs, info
     
     def _safe_action(self, action: int) -> int:
-        """Clamp action so no slice crosses PRB bounds before sending to NS-3.
-
-        Prevents any slice reaching >= 14 PRBs, which triggers a PHY assertion
-        in nr-gnb-phy.cc line 1010 (scheduler declares full-slot 14-symbol grant
-        that the PHY stats loop cannot reconcile).
-        """
+        
+       
         d_embb  = (action // 9) - 1
         d_urllc = ((action % 9) // 3) - 1
         d_mmtc  = (action % 3) - 1
@@ -242,7 +210,7 @@ class SliceGymEnv(gym.Env):
 
         raw = self._ns3_env.step(act)
 
-        # Handle both old (obs, reward, done, info) and 0.26-like 5-value returns.
+       
         if isinstance(raw, tuple) and len(raw) == 5:
             obs_raw, reward, done, truncated, info = raw
         elif isinstance(raw, tuple) and len(raw) == 4:
@@ -260,10 +228,7 @@ class SliceGymEnv(gym.Env):
 
         obs = self._coerce_obs(obs_raw)
         info = self._coerce_info(info)
-        # ns3-gym may deliver C++ extraInfo in two shapes:
-        # 1) {"extraInfo":"{...json...}"}  (older wrappers)
-        # 2) {"demand_active":[...], "served_demand_ratio":[...], "cfg":{...}} (already parsed)
-        # Normalize both into info["extra_json"] so training/eval consume one contract.
+        
         if "extra_json" not in info:
             if all(k in info for k in ("demand_active", "served_demand_ratio", "cfg")):
                 info["extra_json"] = {
