@@ -1,37 +1,10 @@
-#!/usr/bin/env python3
-"""Evaluate classical baselines against NS-3.
-
-Architecture (CRITICAL — matches training):
-  env.reset() is called ONCE before all evaluations begin.
-  Each policy is then evaluated for --episodes consecutive step-count windows
-  (--max-steps steps each) on the same continuous NS-3 simulation.
-
-Baselines (all NS-3 connected):
-  Random      — uniform random from 27 PRB-delta actions.
-  Round-Robin — equal split 17/17/17 PRBs out of 51 (1-PRB tolerance).
-  Greedy-PF   — proportional fair heuristic, one-step lookahead.
-
-NOTE: NS-3 simTime must cover ALL policies:
-  simTime >= n_policies × episodes × max_steps × step_interval_s
-  e.g. 3 policies × 3 ep × 500 steps × 0.2s = 900s → set simTime >= 1000
-  e.g. 1 policy  × 3 ep × 500 steps × 0.2s = 300s → set simTime >= 400
-
-Usage examples:
-  python evaluate.py --policy all           # run all three in sequence
-  python evaluate.py --policy random        # run Random only
-  python evaluate.py --policy round-robin   # run Round-Robin only
-  python evaluate.py --policy greedy-pf     # run Greedy-PF only
-"""
-
 from __future__ import annotations
-
 import argparse
 import json
 import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
-
 import numpy as np
 import yaml
 
@@ -44,14 +17,12 @@ from envs.metrics import compute_sla_rates, nan_or_round
 
 PolicyFn = Callable[[np.ndarray, Any], Tuple[int, Any]]
 
-_ACTION_NO_CHANGE = 13   # (d=0,d=0,d=0) — (d_embb+1)*9 + (d_urllc+1)*3 + (d_mmtc+1)
+_ACTION_NO_CHANGE = 13  
 _PRB_TOTAL        = 51
-_PROGRESS_EVERY   = 50   # print in-step ETA every N steps
+_PROGRESS_EVERY   = 50   
 
 
-# ---------------------------------------------------------------------------
-# Utilities
-# ---------------------------------------------------------------------------
+
 
 def load_config(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
@@ -96,14 +67,14 @@ def round_robin_policy(obs: np.ndarray, hidden: Any) -> Tuple[int, Any]:
     target_frac  = np.array([17.0 / _PRB_TOTAL, 17.0 / _PRB_TOTAL, 17.0 / _PRB_TOTAL])
     current_frac = np.array([obs[0], obs[1], obs[2]])
     deficit      = target_frac - current_frac
-    threshold    = 1.0 / _PRB_TOTAL  # one-PRB tolerance
+    threshold    = 1.0 / _PRB_TOTAL  
 
-    # Already at target — do nothing
+    
     if np.all(np.abs(deficit) < threshold):
         return _ACTION_NO_CHANGE, hidden
 
-    receiver = int(np.argmax(deficit))   # most under-allocated
-    donor    = int(np.argmin(deficit))   # most over-allocated
+    receiver = int(np.argmax(deficit))   
+    donor    = int(np.argmin(deficit))   
 
     if receiver == donor:
         return _ACTION_NO_CHANGE, hidden
@@ -117,30 +88,30 @@ def round_robin_policy(obs: np.ndarray, hidden: Any) -> Tuple[int, Any]:
 def greedy_pf_policy(obs: np.ndarray, hidden: Any) -> Tuple[int, Any]:
     """Proportional Fair: maximise thr[s] / avg_thr_history[s].
     hidden carries the exponential moving average of throughput per slice."""
-    # Convert normalised obs back to Mbps using known per-slice maxima
+   
     MAX_THR  = np.array([65.0, 30.0, 16.0])
     thr_mbps = np.array([obs[3], obs[4], obs[5]]) * MAX_THR
 
-    # Initialise history on first call
+    
     if hidden is None:
         hidden = np.maximum(thr_mbps, 1e-3)
 
-    avg_thr = hidden          # exponential moving average
-    alpha   = 0.1             # EMA smoothing factor
+    avg_thr = hidden          
+    alpha   = 0.1             
 
     active = thr_mbps > 1e-3
     if active.sum() < 2:
-        # Update history even in idle steps, then hold
+        
         hidden = (1 - alpha) * avg_thr + alpha * thr_mbps
         return _ACTION_NO_CHANGE, hidden
 
-    # PF score: instantaneous throughput / historical average
+    
     pf_score = np.where(active, thr_mbps / np.maximum(avg_thr, 1e-9), 0.0)
 
-    donor    = int(np.argmax(pf_score))                                      # highest PF → give up a PRB
-    receiver = int(np.argmin(np.where(active, pf_score, np.inf)))            # lowest PF among active
+    donor    = int(np.argmax(pf_score))                                      
+    receiver = int(np.argmin(np.where(active, pf_score, np.inf)))            
 
-    # Update history
+   
     hidden = (1 - alpha) * avg_thr + alpha * thr_mbps
 
     if donor == receiver:
@@ -152,9 +123,7 @@ def greedy_pf_policy(obs: np.ndarray, hidden: Any) -> Tuple[int, Any]:
     return _action_from_delta(delta[0], delta[1], delta[2]), hidden
 
 
-# ---------------------------------------------------------------------------
-# Latency accumulator (defined once, not per-step)
-# ---------------------------------------------------------------------------
+
 
 def _accum_lat(
     slice_key: str,
@@ -175,9 +144,7 @@ def _accum_lat(
     return lat_sum + lat_norm * 2.0 * float(cfg["env"]["max_lat_ms"][slice_key]), lat_n + 1
 
 
-# ---------------------------------------------------------------------------
-# Core evaluation loop
-# ---------------------------------------------------------------------------
+
 
 def evaluate_policy(
     name: str,
@@ -189,12 +156,7 @@ def evaluate_policy(
     cfg: Dict,
     step_log_path: Optional[Path] = None,
 ) -> Tuple[np.ndarray, Dict]:
-    """Run `episodes` consecutive windows for one policy, return (obs, results).
-
-    If step_log_path is provided, every step is written as one JSON line to that
-    file (appended), with fields matching dqn_log.jsonl where possible.
-    Recommended usage: --episodes 1 --step-log results/logs/baseline_steps.jsonl
-    """
+    
     total_steps_planned = episodes * max_steps
     print(f"\n[evaluate.py] Evaluating {name} "
           f"({episodes} ep × {max_steps} steps = {total_steps_planned} total steps)...")
@@ -203,7 +165,7 @@ def evaluate_policy(
     policy_start = time.time()
     steps_done   = 0
 
-    # Open step-level log file once (append mode so multiple policies accumulate)
+    
     _step_log_fh = None
     if step_log_path is not None:
         step_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -274,10 +236,7 @@ def evaluate_policy(
 
             extra_json = info.get("extra_json")
 
-            # ── per-step JSONL record (written before accumulators so we can
-            #    reuse the same local variables after they are computed below) ──
-            # We defer the actual write to after the accumulator block so all
-            # values are available; flag it here and write at end of step.
+         
             _write_step = _step_log_fh is not None
             lat_ms_raw = extra_json.get("lat_ms") if extra_json else None
 
@@ -328,7 +287,7 @@ def evaluate_policy(
                 rwd_viol_sum += float(rt.get("violation_rate",  0.0))
                 active_sum   += float(rt.get("active_slices",   0.0))
 
-            # ── write per-step record ─────────────────────────────────────────
+            # write per-step record 
             if _write_step:
                 prb_frac_s = decoded.get("prb_frac", {})
                 rt_s       = (extra_json or {}).get("reward_terms", {})
@@ -365,7 +324,7 @@ def evaluate_policy(
                 _step_log_fh.write(json.dumps(step_record) + "\n")
                 _step_log_fh.flush()
 
-            # In-step progress print every _PROGRESS_EVERY steps
+            
             if (step_i + 1) % _PROGRESS_EVERY == 0:
                 elapsed       = time.time() - policy_start
                 secs_per_step = elapsed / max(1, steps_done)
@@ -409,7 +368,7 @@ def evaluate_policy(
         ep_rwd_viol.append(rwd_viol_sum / n)
         ep_active.append(active_sum   / n)
 
-        # Episode summary
+        
         elapsed   = time.time() - policy_start
         eta_s     = (elapsed / steps_done) * (total_steps_planned - steps_done)
         print(f"  ✓ ep {ep+1:>2}/{episodes}  "
@@ -471,9 +430,9 @@ def evaluate_policy(
     return obs, results
 
 
-# ---------------------------------------------------------------------------
+
 # Main
-# ---------------------------------------------------------------------------
+
 
 def main() -> None:
     _VALID_POLICIES = ("random", "round-robin", "greedy-pf", "all")
@@ -510,7 +469,7 @@ def main() -> None:
     out_path      = Path(args.out)
     step_log_path = Path(args.step_log) if args.step_log else None
 
-    # Build the ordered list of (name, policy_fn) pairs to run
+    
     rng = np.random.default_rng(args.seed)
 
     def _random_policy(obs, hidden):
@@ -565,7 +524,7 @@ def main() -> None:
 
     env.close()
 
-    # ── Summary table ─────────────────────────────────────────────────────────
+    
     col = 14
     print("\n" + "=" * 105)
     print(f"{'Policy':<{col}} {'Reward':>9} {'SLA%':>7} "
